@@ -81,20 +81,22 @@ class PathGen:
                     rot_a = moveBindings[key][1]
 
                 elif key == ' ' or key == 'k' :
-                    lin_a = 0
-                    rot_a = 0
+                    lin_sign = abs(self.cur_lin_vel)/self.cur_lin_vel
+                    rot_sign = abs(self.cur_rot_vel)/self.cur_rot_vel
+                    lin_a = - lin_sign * abs(self.cur_lin_vel)
+                    rot_a = - rot_sign * abs(self.cur_rot_vel)
                 else:
                     if abs(self.cur_lin_vel) > 0:
                         sign = abs(self.cur_lin_vel)/self.cur_lin_vel
                         if abs(self.cur_lin_vel) < base:
                             lin_a = abs(self.cur_lin_vel)*-sign
-                        else: lin_a = 0.5 * base * -sign
+                        else: lin_a = 1.2 * base * -sign
 
                     if abs(self.cur_rot_vel) > 0:
                         sign = abs(self.cur_rot_vel)/self.cur_rot_vel
                         if abs(self.cur_rot_vel) < base:
                             rot_a = abs(self.cur_rot_vel)*-sign
-                        else: rot_a = 0.5 * base * -sign
+                        else: rot_a = 1.5 * base * -sign
 
                     if (key == '\x03'):
                         return "break"

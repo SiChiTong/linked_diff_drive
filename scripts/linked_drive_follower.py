@@ -22,15 +22,22 @@ class LinkedDrive:
                        rot_acc=1.0, lin_acc=1.0): # in rad/s^2 and m/s^2
 
         #self.br = TransformBroadcaster()
-        self.marker_array = MarkerArray()
+        #self.marker_array = MarkerArray()
+        ''' MARKERS '''
         self.f_array = MarkerArray() # front marker
         self.fp_array = MarkerArray() # front-predict marker
-        self.MARKER_MAX = 20
+        ''' ARROWS'''
+        self.f_arrow_array = MarkerArray() # front orientation marker
+        self.fp_arrow_array = MarkerArray() # front-predict orientation marker
+        ''' COUNTS '''
         self.f_COUNT = 0
         self.fp_COUNT = 0
+        self.f_arrow_COUNT = 0
+        self.fp_arrow_COUNT = 0
+        self.MARKER_MAX = 1
 
         ''' Shared params '''
-        self.dt = 1 # sec
+        self.dt = 0.5 # sec
 
         ''' variables of FRONT car '''
         self.RATE = 10
@@ -51,10 +58,12 @@ class LinkedDrive:
 
         ''' ROS node '''
         rospy.init_node('linked_drive')
-        topic = 'visualization_marker_array'
-        self.marker_pub = rospy.Publisher(topic, MarkerArray, queue_size=10)
-        self.f_sub = rospy.Subscriber("/front_pose", PoseStamped, self.f_pose_update)
-        self.f_sub = rospy.Subscriber("/front_twist", Twist, self.f_twist_update)
+        self.f_marker_pub = rospy.Publisher('front_marker', MarkerArray, queue_size=10)
+        self.fp_marker_pub = rospy.Publisher('front_predict_marker', MarkerArray, queue_size=10)
+        self.f_arrow_pub = rospy.Publisher('front_arrow', MarkerArray, queue_size=10)
+        self.fp_arrow_pub = rospy.Publisher('front_predict_arrow', MarkerArray, queue_size=10)
+        self.f_sub_1 = rospy.Subscriber("/front_pose", PoseStamped, self.f_pose_update)
+        self.f_sub_2 = rospy.Subscriber("/front_twist", Twist, self.f_twist_update)
 
     def f_pose_update(self, data):
         ''' update x, y coordinate '''
@@ -71,36 +80,73 @@ class LinkedDrive:
         self.front_vel[0] = data.linear.x
         self.front_vel[1] = data.angular.z
 
-    def marker_gen(self, x, y, array, count, r=1.0, g=1.0, b=0.0):
+    def marker_gen(self, x, y, array_name, count, r=1.0, g=1.0, b=0.0, a=1.0):
 
-        marker = Marker()
-        marker.header.frame_id = 'map'
-        marker.type = marker.SPHERE
-        marker.action = marker.ADD
-        marker.scale.x = 0.2
-        marker.scale.y = 0.2
-        marker.scale.z = 0.2
-        marker.color.a = 1.0
-        marker.color.r = r
-        marker.color.g = g
-        marker.color.b = b
-        marker.pose.orientation.w = 1.0
-        marker.pose.position.x = x 
-        marker.pose.position.y = y 
-        marker.pose.position.z = 0.0 
+        m = Marker()
+        m.header.frame_id = 'map'
+        m.type = Marker.SPHERE
+        m.action = m.ADD
+        m.scale.x = 0.1
+        m.scale.y = 0.1
+        m.scale.z = 0.1
+        m.color.a = a
+        m.color.r = r
+        m.color.g = g
+        m.color.b = b
+        m.pose.orientation.w = 0 
+        m.pose.position.x = x 
+        m.pose.position.y = y 
+        m.pose.position.z = 0.0 
         
-        array = self.marker_array
+        array = array_name
         ''' add new marker and remove the old one '''
         if count > self.MARKER_MAX:
             array.markers.pop(0)
-        array.markers.append(marker)
+        array.markers.append(m)
         count += 1 # this didn't work???
         #print("\n{0}".format(count))
 
         ''' Renumber the marker IDs '''
         id = 0
-        for m in array.markers:
-            m.id = id
+        for ma in array.markers:
+            ma.id = id
+            id += 1
+
+    def arrow_gen(self, x, y, array_name, count, quaternion=[0,0,0,0], r=1.0, g=1.0, b=0.0, a=1.0):
+
+        m = Marker()
+        m.header.frame_id = 'map'
+        m.type = Marker.ARROW
+        m.action = Marker.ADD
+        m.scale.x = 0.5
+        m.scale.y = 0.03
+        m.scale.z = 0.03
+        m.color.a = a
+        m.color.r = r
+        m.color.g = g
+        m.color.b = b
+        m.pose.orientation.x = quaternion[0] 
+        m.pose.orientation.y = quaternion[1] 
+        m.pose.orientation.z = quaternion[2] 
+        m.pose.orientation.w = quaternion[3] 
+        m.pose.position.x = x 
+        m.pose.position.y = y 
+        m.pose.position.z = 0.0 
+        
+        MAX = 1
+
+        array = array_name
+        ''' add new marker and remove the old one '''
+        if count > MAX:
+            array.markers.pop(0)
+        array.markers.append(m)
+        count += 1 # this didn't work???
+        #print("\n{0}".format(count))
+
+        ''' Renumber the marker IDs '''
+        id = 0
+        for ma in array.markers:
+            ma.id = id
             id += 1
 
     def marker_transfer(self, x, y, child, parent="map"):
@@ -150,16 +196,32 @@ class LinkedDrive:
         while not rospy.is_shutdown():
             ''' update the front xy coord '''
             [x_cur, y_cur] = self.front_pose
-            self.marker_gen(x=x_cur, y=y_cur, array=self.f_array, count=self.f_COUNT, r=0.6, g=0.75, b=0.97)
+            f_qua = self.front_ori 
+            self.marker_gen(x=x_cur, y=y_cur, array_name=self.f_array, 
+                            count=self.f_COUNT, r=1.0, g=1.0, b=1.0, a=1.0)
+            self.arrow_gen(x=x_cur, y=y_cur, array_name=self.f_arrow_array, 
+                            count=self.f_arrow_COUNT, quaternion=f_qua, 
+                            r=1.0, g=1.0, b=1.0, a=1.0)
             #self.marker_transfer(x_cur, y_cur, child="front")
             ''' update the predicted front xy coord '''
             [x_p, y_p, th_p] = self.f_predict()
-            self.marker_gen(x=x_p, y=y_p, array=self.fp_array, count=self.fp_COUNT, r=1.0, g=1.0, b=1.0)
+            fp_qua = t.quaternion_from_euler(0.0, 0.0, th_p)
+            self.marker_gen(x=x_p, y=y_p, array_name=self.fp_array, 
+                            count=self.fp_COUNT, r=.0, g=1.0, b=.0, a=0.3)
+            self.arrow_gen(x=x_p, y=y_p, array_name=self.fp_arrow_array, 
+                            count=self.fp_arrow_COUNT, quaternion=fp_qua, 
+                            r=.0, g=1.0, b=.0, a=0.3)
             #self.marker_transfer(x_p, y_p, child="front_predict")
             ''' Publish the MarkerArray '''
-            self.marker_pub.publish(self.marker_array)
+            self.f_marker_pub.publish(self.f_array)
+            self.f_arrow_pub.publish(self.f_arrow_array)
+            self.fp_marker_pub.publish(self.fp_array)
+            self.fp_arrow_pub.publish(self.fp_arrow_array)
+            ''' Delete old marker when count exceeds max. count '''
             self.f_COUNT += 1
+            self.f_arrow_COUNT += 1
             self.fp_COUNT += 1
+            self.fp_arrow_COUNT += 1
 
             rate.sleep()
 
