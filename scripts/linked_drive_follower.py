@@ -1,6 +1,7 @@
 #! /usr/bin/env python 
 
 # Generate random path for diff drive
+from __future__ import print_function
 import numpy as np
 import copy
 import math
@@ -94,10 +95,10 @@ class LinkedDrive:
         self.front_vel = [0.0, 0.0]  # [v_linear, w_angular]
         
         ''' variables and params of REAR car '''
-        self.INIT_X = 0.0
+        self.INIT_X = - self.L
         self.INIT_Y = 0.0
-        self.cur_rot_vel = 0.0
-        self.cur_lin_vel = 0.0
+        self.cur_pose = [0.0, 0.0] # [x, y]
+        self.cur_vel = [0.0, 0.0] # [lin, ang]
         self.cur_th = 0.0
         self.ROT_VEL = [-rot_vel_max, rot_vel_max]
         self.LIN_VEL = [-lin_vel_max, lin_vel_max]
@@ -134,11 +135,14 @@ class LinkedDrive:
         omega = self.front_vel[1]
         if omega == 0:
             r = 0
+            d_x = self.front_vel[0] * self.dt * np.cos(f_th_0)
+            d_y = self.front_vel[0] * self.dt * np.sin(f_th_0)
         else:
             r = self.front_vel[0] / omega
-        ''' pose of end of arc before rotation '''
-        d_x = r * np.sin(omega * self.dt) 
-        d_y = r - r * np.cos(omega * self.dt) 
+            ''' pose of end of arc before rotation '''
+            d_x = r * np.sin(omega * self.dt) 
+            d_y = r - r * np.cos(omega * self.dt) 
+#        print("d_x, d_y in predict={0}".format([d_x, d_y]))
         ''' rotate for the theta '''
         PI = np.pi
         rot_mat = np.array([[np.cos(f_th_0), - np.sin(f_th_0)],
@@ -159,11 +163,29 @@ class LinkedDrive:
         lst_poses = []
         for th in lst_rad:
             lst_poses.append([x + self.L * np.cos(th), y + self.L * np.sin(th)])
-        print(lst_poses)
         return lst_poses
 
-    def vels_from_pose(self):
-        ''' return lin/ang velocities from given poses '''
+    def vels_from_pose(self, pose):
+
+        self.cur_pose = self.front_pose # testing, should be deleted
+        [row, pitch, self.cur_th] = t.euler_from_quaternion(self.front_ori)
+
+        ''' return lin/ang velocities from given pose '''
+        mat_rot_inv = np.array([ [np.cos(self.cur_th), np.sin(self.cur_th)],
+                                 [-np.sin(self.cur_th), np.cos(self.cur_th)] ])
+        [[dx], [dy]] = np.dot(mat_rot_inv, np.array([[pose[0]-self.cur_pose[0]],
+                                                     [pose[1]-self.cur_pose[1]]]))
+
+        if dy == 0: # only lin_vel, no rotation
+            w = 0.0
+            v = dx / self.dt
+        else:
+            r = (dx**2 + dy**2) / (2.0*dy)
+            ''' w = omega and v = vel.x '''
+            w = np.arcsin(dx /np.array(r)) / self.dt # 1x2 mat
+            v = np.array(r) * np.array(w)
+        
+#        rospy.loginfo("v={0}; w={1}; ans={2}; dxdy={3}\n".format(v, w, self.front_vel, [dx,dy]))
 
 
     def check_link_dist(self):
@@ -192,13 +214,15 @@ class LinkedDrive:
              front_predict_pose = self.f_predict() #[x, y, th]
              fp_qua = t.quaternion_from_euler(0.0, 0.0, front_predict_pose[2])
              potential_poses = self.get_potential_poses()
+             self.vels_from_pose(front_predict_pose[:2])
+
              ''' Publish markers (array) '''
              front.publish_marker([self.front_pose])
              front_arrow.publish_marker([self.front_pose], self.front_ori)
              front_predict.publish_marker([front_predict_pose])
              front_predict_arrow.publish_marker([front_predict_pose], fp_qua)
              predict_potential.publish_marker(potential_poses)
-             print(len(potential_poses))
+             #print(len(potential_poses))
             
              rate.sleep()
 
