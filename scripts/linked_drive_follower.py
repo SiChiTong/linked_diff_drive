@@ -15,29 +15,77 @@ from visualization_msgs.msg import MarkerArray
 #from std_msgs.msg import Header
 
 
+class MarkerPub:
+    def __init__(self, name, marker_type, rgba):
+        ''' MARKERS '''
+        self.name = name # str
+        self.marker_type = marker_type # int
+        if self.marker_type == 2: self.scale = [0.1, 0.1, 0.1] # SPHERE
+        elif self.marker_type == 1: self.scale = [0.01, 0.01, 0.01] # CUBE
+        elif self.marker_type == 0: self.scale = [0.5, 0.03, 0.03] # ARROW
+        else: self.scale = [0.06, 0.06, 0.06] # OTHERS
+        self.rgba = rgba # list
+        self.array = MarkerArray() 
+        ''' COUNTS '''
+        self.COUNT = 0
+        self.MARKER_MAX = 1
+        ''' ROS node '''
+        self.marker_pub = rospy.Publisher(self.name, MarkerArray, queue_size=10)
+
+    def publish_marker(self, poses, quaternion=[0,0,0,1.0]):
+        for pose in poses:
+
+            m = Marker()
+            m.header.frame_id = 'map'
+            m.type = self.marker_type
+            m.action = m.ADD
+            m.scale.x = self.scale[0]
+            m.scale.y = self.scale[1]
+            m.scale.z = self.scale[2]
+            m.color.r = self.rgba[0] 
+            m.color.g = self.rgba[1] 
+            m.color.b = self.rgba[2] 
+            m.color.a = self.rgba[3]
+            m.pose.orientation.x = quaternion[0] 
+            m.pose.orientation.y = quaternion[1] 
+            m.pose.orientation.z = quaternion[2] 
+            m.pose.orientation.w = quaternion[3] 
+            m.pose.position.x = pose[0] 
+            m.pose.position.y = pose[1]
+            m.pose.position.z = 0.0 
+            
+            ''' add new marker and remove the old one '''
+            if len(poses) > self.MARKER_MAX: self.MARKER_MAX = len(poses)
+            if self.COUNT > self.MARKER_MAX:
+                self.array.markers.pop(0)
+
+            self.array.markers.append(m)
+
+            self.COUNT += 1 
+
+        ''' Renumber the marker IDs '''
+        id = 0
+        for ma in self.array.markers:
+            ma.id = id
+            id += 1
+
+        self.marker_pub.publish(self.array)
+
+    def marker_transfer(self, x, y, child, parent="map"):
+
+        time = rospy.Time.now()
+        self.br.sendTransform( (x, y, 0), (0, 0, 0, 1.0), time, parent, child )
+        
+
 class LinkedDrive:
 
     def __init__(self, rot_vel_max=2.5718, # In rad/s
                        lin_vel_max=3.0, # In m/s
                        rot_acc=1.0, lin_acc=1.0): # in rad/s^2 and m/s^2
 
-        #self.br = TransformBroadcaster()
-        #self.marker_array = MarkerArray()
-        ''' MARKERS '''
-        self.f_array = MarkerArray() # front marker
-        self.fp_array = MarkerArray() # front-predict marker
-        ''' ARROWS'''
-        self.f_arrow_array = MarkerArray() # front orientation marker
-        self.fp_arrow_array = MarkerArray() # front-predict orientation marker
-        ''' COUNTS '''
-        self.f_COUNT = 0
-        self.fp_COUNT = 0
-        self.f_arrow_COUNT = 0
-        self.fp_arrow_COUNT = 0
-        self.MARKER_MAX = 1
-
         ''' Shared params '''
         self.dt = 0.5 # sec
+        self.L = 1.0 # dist between two solamr when connected with shelft
 
         ''' variables of FRONT car '''
         self.RATE = 10
@@ -57,11 +105,6 @@ class LinkedDrive:
         self.LIN_ACC = [-lin_acc, lin_acc]
 
         ''' ROS node '''
-        rospy.init_node('linked_drive')
-        self.f_marker_pub = rospy.Publisher('front_marker', MarkerArray, queue_size=10)
-        self.fp_marker_pub = rospy.Publisher('front_predict_marker', MarkerArray, queue_size=10)
-        self.f_arrow_pub = rospy.Publisher('front_arrow', MarkerArray, queue_size=10)
-        self.fp_arrow_pub = rospy.Publisher('front_predict_arrow', MarkerArray, queue_size=10)
         self.f_sub_1 = rospy.Subscriber("/front_pose", PoseStamped, self.f_pose_update)
         self.f_sub_2 = rospy.Subscriber("/front_twist", Twist, self.f_twist_update)
 
@@ -80,79 +123,6 @@ class LinkedDrive:
         self.front_vel[0] = data.linear.x
         self.front_vel[1] = data.angular.z
 
-    def marker_gen(self, x, y, array_name, count, r=1.0, g=1.0, b=0.0, a=1.0):
-
-        m = Marker()
-        m.header.frame_id = 'map'
-        m.type = Marker.SPHERE
-        m.action = m.ADD
-        m.scale.x = 0.1
-        m.scale.y = 0.1
-        m.scale.z = 0.1
-        m.color.a = a
-        m.color.r = r
-        m.color.g = g
-        m.color.b = b
-        m.pose.orientation.w = 0 
-        m.pose.position.x = x 
-        m.pose.position.y = y 
-        m.pose.position.z = 0.0 
-        
-        array = array_name
-        ''' add new marker and remove the old one '''
-        if count > self.MARKER_MAX:
-            array.markers.pop(0)
-        array.markers.append(m)
-        count += 1 # this didn't work???
-        #print("\n{0}".format(count))
-
-        ''' Renumber the marker IDs '''
-        id = 0
-        for ma in array.markers:
-            ma.id = id
-            id += 1
-
-    def arrow_gen(self, x, y, array_name, count, quaternion=[0,0,0,0], r=1.0, g=1.0, b=0.0, a=1.0):
-
-        m = Marker()
-        m.header.frame_id = 'map'
-        m.type = Marker.ARROW
-        m.action = Marker.ADD
-        m.scale.x = 0.5
-        m.scale.y = 0.03
-        m.scale.z = 0.03
-        m.color.a = a
-        m.color.r = r
-        m.color.g = g
-        m.color.b = b
-        m.pose.orientation.x = quaternion[0] 
-        m.pose.orientation.y = quaternion[1] 
-        m.pose.orientation.z = quaternion[2] 
-        m.pose.orientation.w = quaternion[3] 
-        m.pose.position.x = x 
-        m.pose.position.y = y 
-        m.pose.position.z = 0.0 
-        
-        MAX = 1
-
-        array = array_name
-        ''' add new marker and remove the old one '''
-        if count > MAX:
-            array.markers.pop(0)
-        array.markers.append(m)
-        count += 1 # this didn't work???
-        #print("\n{0}".format(count))
-
-        ''' Renumber the marker IDs '''
-        id = 0
-        for ma in array.markers:
-            ma.id = id
-            id += 1
-
-    def marker_transfer(self, x, y, child, parent="map"):
-
-        time = rospy.Time.now()
-        self.br.sendTransform( (x, y, 0), (0, 0, 0, 1.0), time, parent, child )
 
     def f_predict(self):
         ''' prediction of front car's trajectory using arc (combination of v and w) '''
@@ -175,13 +145,30 @@ class LinkedDrive:
                             [np.sin(f_th_0), np.cos(f_th_0)]])
         [[f_x_1], [f_y_1]] = [[f_x_0], [f_y_0]] + np.dot(rot_mat, [[d_x], [d_y]])
         f_th_1 = f_th_0 + omega * self.dt 
-        print("\ncurrent : {0}".format([f_x_0, f_y_0]))
-        print("\ncurrent vel : {0}".format(self.front_vel))
-        print("\npredicted : {0}".format([f_x_1, f_y_1]))
+#        print("\ncurrent : {0}".format([f_x_0, f_y_0]))
+#        print("\ncurrent vel : {0}".format(self.front_vel))
+#        print("\npredicted : {0}".format([f_x_1, f_y_1]))
         
         return [f_x_1, f_y_1, f_th_1]
         
+    def get_potential_poses(self):
+        ''' return potential locations (poses) for follower to be at '''
+        res = 0.1 # rad, potential poses every __ rad
+        [x, y] = self.f_predict()[:2]
+        lst_rad = np.arange(0, 2 * np.pi, res)
+        lst_poses = []
+        for th in lst_rad:
+            lst_poses.append([x + self.L * np.cos(th), y + self.L * np.sin(th)])
+        print(lst_poses)
+        return lst_poses
 
+    def vels_from_pose(self):
+        ''' return lin/ang velocities from given poses '''
+
+
+    def check_link_dist(self):
+        ''' checl the distance between front and follower '''
+        pass
     
     def states_update(self):
         pass
@@ -192,38 +179,28 @@ class LinkedDrive:
 
     def main(self):
 
+        rospy.init_node('linked_drive')
         rate = rospy.Rate(self.RATE)
         while not rospy.is_shutdown():
-            ''' update the front xy coord '''
-            [x_cur, y_cur] = self.front_pose
-            f_qua = self.front_ori 
-            self.marker_gen(x=x_cur, y=y_cur, array_name=self.f_array, 
-                            count=self.f_COUNT, r=1.0, g=1.0, b=1.0, a=1.0)
-            self.arrow_gen(x=x_cur, y=y_cur, array_name=self.f_arrow_array, 
-                            count=self.f_arrow_COUNT, quaternion=f_qua, 
-                            r=1.0, g=1.0, b=1.0, a=1.0)
-            #self.marker_transfer(x_cur, y_cur, child="front")
-            ''' update the predicted front xy coord '''
-            [x_p, y_p, th_p] = self.f_predict()
-            fp_qua = t.quaternion_from_euler(0.0, 0.0, th_p)
-            self.marker_gen(x=x_p, y=y_p, array_name=self.fp_array, 
-                            count=self.fp_COUNT, r=.0, g=1.0, b=.0, a=0.3)
-            self.arrow_gen(x=x_p, y=y_p, array_name=self.fp_arrow_array, 
-                            count=self.fp_arrow_COUNT, quaternion=fp_qua, 
-                            r=.0, g=1.0, b=.0, a=0.3)
-            #self.marker_transfer(x_p, y_p, child="front_predict")
-            ''' Publish the MarkerArray '''
-            self.f_marker_pub.publish(self.f_array)
-            self.f_arrow_pub.publish(self.f_arrow_array)
-            self.fp_marker_pub.publish(self.fp_array)
-            self.fp_arrow_pub.publish(self.fp_arrow_array)
-            ''' Delete old marker when count exceeds max. count '''
-            self.f_COUNT += 1
-            self.f_arrow_COUNT += 1
-            self.fp_COUNT += 1
-            self.fp_arrow_COUNT += 1
-
-            rate.sleep()
+             ''' Initialize markers '''
+             front = MarkerPub(name='front_marker', marker_type=2, rgba=[1.0,1.0,1.0,1.0])
+             front_predict = MarkerPub(name='front_predict_marker', marker_type=2, rgba=[0.0,1.0,0.0,0.3])
+             predict_potential = MarkerPub(name='potential_poses', marker_type=1, rgba=[0.5,0.95,0.8,0.8])
+             front_arrow = MarkerPub(name='front_arrow', marker_type=0, rgba=[1.0,1.0,1.0,1.0])
+             front_predict_arrow = MarkerPub(name='front_predict_arrow', marker_type=0, rgba=[0.0,1.0,0.0,0.3])
+             ''' get poses '''
+             front_predict_pose = self.f_predict() #[x, y, th]
+             fp_qua = t.quaternion_from_euler(0.0, 0.0, front_predict_pose[2])
+             potential_poses = self.get_potential_poses()
+             ''' Publish markers (array) '''
+             front.publish_marker([self.front_pose])
+             front_arrow.publish_marker([self.front_pose], self.front_ori)
+             front_predict.publish_marker([front_predict_pose])
+             front_predict_arrow.publish_marker([front_predict_pose], fp_qua)
+             predict_potential.publish_marker(potential_poses)
+             print(len(potential_poses))
+            
+             rate.sleep()
 
 if __name__ == '__main__':
 

@@ -11,6 +11,7 @@ Panels:
         - /MarkerArray2
         - /MarkerArray3
         - /MarkerArray4
+        - /MarkerArray5
       Splitter Ratio: 0.5
     Tree Height: 755
   - Class: rviz/Selection
@@ -101,7 +102,7 @@ Visualization Manager:
       Marker Topic: /front_arrow
       Name: MarkerArray
       Namespaces:
-        {}
+        "": true
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -109,7 +110,15 @@ Visualization Manager:
       Marker Topic: /front_predict_arrow
       Name: MarkerArray
       Namespaces:
-        {}
+        "": true
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /potential_poses
+      Name: MarkerArray
+      Namespaces:
+        "": true
       Queue Size: 100
       Value: true
   Enabled: true
