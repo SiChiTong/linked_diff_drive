@@ -22,7 +22,7 @@ class MarkerPub:
         self.name = name # str
         self.marker_type = marker_type # int
         if self.marker_type == 2: self.scale = [0.1, 0.1, 0.1] # SPHERE
-        elif self.marker_type == 1: self.scale = [0.01, 0.01, 0.01] # CUBE
+        elif self.marker_type == 1: self.scale = [0.05, 0.05, 0.05] # CUBE
         elif self.marker_type == 0: self.scale = [0.5, 0.03, 0.03] # ARROW
         else: self.scale = [0.06, 0.06, 0.06] # OTHERS
         self.rgba = rgba # list
@@ -33,10 +33,15 @@ class MarkerPub:
         ''' ROS node '''
         self.marker_pub = rospy.Publisher(self.name, MarkerArray, queue_size=10)
 
-    def publish_marker(self, poses, quaternion=[0,0,0,1.0]):
+    def publish_marker(self, poses, quaternion=[0,0,0,1.0], clear=False):
+        ''' erase all and re-append '''
+
+        self.array = MarkerArray()
+
         for pose in poses:
 
             m = Marker()
+            m.lifetime = rospy.Duration.from_sec(0.1)
             m.header.frame_id = 'map'
             m.type = self.marker_type
             m.action = m.ADD
@@ -54,15 +59,15 @@ class MarkerPub:
             m.pose.position.x = pose[0] 
             m.pose.position.y = pose[1]
             m.pose.position.z = 0.0 
-            
-            ''' add new marker and remove the old one '''
-            if len(poses) > self.MARKER_MAX: self.MARKER_MAX = len(poses)
-            if self.COUNT > self.MARKER_MAX:
-                self.array.markers.pop(0)
 
             self.array.markers.append(m)
-
-            self.COUNT += 1 
+            
+#            ''' add new marker and remove the old one '''
+#            self.MARKER_MAX = len(poses)
+#            if self.COUNT > self.MARKER_MAX:
+#                self.array.markers.pop(0)
+#            self.array.markers.append(m)
+#            self.COUNT += 1 
 
         ''' Renumber the marker IDs '''
         id = 0
@@ -92,6 +97,7 @@ class LinkedDrive:
         self.RATE = 10
         self.front_pose = [0.0, 0.0] # [x, y]
         self.front_ori = [0.0, 0.0, 0.0, 0.0] # [x, y, z, w]
+        (row, pitch, self.front_th) = t.euler_from_quaternion(self.front_ori)
         self.front_vel = [0.0, 0.0]  # [v_linear, w_angular]
         
         ''' variables and params of REAR car '''
@@ -125,78 +131,101 @@ class LinkedDrive:
         self.front_vel[1] = data.angular.z
 
 
-    def f_predict(self):
+    def pose_update(self, pose, vel, th0):
         ''' prediction of front car's trajectory using arc (combination of v and w) '''
         ''' front car state 0 '''
-        (roll, pitch, f_th_0) = t.euler_from_quaternion(self.front_ori)
-        f_x_0 = self.front_pose[0]
-        f_y_0 = self.front_pose[1]
+        x0 = pose[0]
+        y0 = pose[1]
         ''' radius of the arc : r > 0, arc on the left; r < 0, arc on the right'''
-        omega = self.front_vel[1]
+        omega = vel[1]
         if omega == 0:
             r = 0
-            d_x = self.front_vel[0] * self.dt * np.cos(f_th_0)
-            d_y = self.front_vel[0] * self.dt * np.sin(f_th_0)
+            d_x = vel[0] * self.dt * np.cos(th0)
+            d_y = vel[0] * self.dt * np.sin(th0)
         else:
-            r = self.front_vel[0] / omega
+            r = vel[0] / omega
             ''' pose of end of arc before rotation '''
             d_x = r * np.sin(omega * self.dt) 
             d_y = r - r * np.cos(omega * self.dt) 
 #        print("d_x, d_y in predict={0}".format([d_x, d_y]))
         ''' rotate for the theta '''
         PI = np.pi
-        rot_mat = np.array([[np.cos(f_th_0), - np.sin(f_th_0)],
-                            [np.sin(f_th_0), np.cos(f_th_0)]])
-        [[f_x_1], [f_y_1]] = [[f_x_0], [f_y_0]] + np.dot(rot_mat, [[d_x], [d_y]])
-        f_th_1 = f_th_0 + omega * self.dt 
+        rot_mat = np.array([[np.cos(th0), - np.sin(th0)],
+                            [np.sin(th0), np.cos(th0)]])
+        [[x1], [y1]] = [[x0], [y0]] + np.dot(rot_mat, [[d_x], [d_y]])
+        th1 = th0 + omega * self.dt 
 #        print("\ncurrent : {0}".format([f_x_0, f_y_0]))
 #        print("\ncurrent vel : {0}".format(self.front_vel))
 #        print("\npredicted : {0}".format([f_x_1, f_y_1]))
         
-        return [f_x_1, f_y_1, f_th_1]
+        return [x1, y1, th1]
         
     def get_potential_poses(self):
         ''' return potential locations (poses) for follower to be at '''
         res = 0.1 # rad, potential poses every __ rad
-        [x, y] = self.f_predict()[:2]
+        [x, y] = self.pose_update(self.front_pose, self.front_vel, self.front_th)[:2]
         lst_rad = np.arange(0, 2 * np.pi, res)
         lst_poses = []
         for th in lst_rad:
             lst_poses.append([x + self.L * np.cos(th), y + self.L * np.sin(th)])
         return lst_poses
 
-    def vels_from_pose(self, pose):
-
-        self.cur_pose = self.front_pose # testing, should be deleted
-        [row, pitch, self.cur_th] = t.euler_from_quaternion(self.front_ori)
-
+    def vels_from_pose(self, poses):
         ''' return lin/ang velocities from given pose '''
+        dict_rechable = dict()
         mat_rot_inv = np.array([ [np.cos(self.cur_th), np.sin(self.cur_th)],
                                  [-np.sin(self.cur_th), np.cos(self.cur_th)] ])
-        [[dx], [dy]] = np.dot(mat_rot_inv, np.array([[pose[0]-self.cur_pose[0]],
-                                                     [pose[1]-self.cur_pose[1]]]))
 
-        if dy == 0: # only lin_vel, no rotation
-            w = 0.0
-            v = dx / self.dt
-        else:
-            r = (dx**2 + dy**2) / (2.0*dy)
-            ''' w = omega and v = vel.x '''
-            w = np.arcsin(dx /np.array(r)) / self.dt # 1x2 mat
-            v = np.array(r) * np.array(w)
-        
+        for pose in poses:
+            [[dx], [dy]] = np.dot(mat_rot_inv, np.array([[pose[0]-self.cur_pose[0]],
+                                                         [pose[1]-self.cur_pose[1]]]))
+            if dy == 0: # only lin_vel, no rotation
+                w = 0.0
+                v = dx / self.dt
+            else:
+                r = (dx**2 + dy**2) / (2.0*dy)
+                ''' w = omega and v = vel.x '''
+                w = np.arcsin(dx /np.array(r)) / self.dt # 1x2 mat
+                v = np.array(r) * np.array(w)
+            if self.check_vels_range([v, w]): 
+                dict_rechable[tuple(pose)] = [v, w]
+
+        return dict_rechable
 #        rospy.loginfo("v={0}; w={1}; ans={2}; dxdy={3}\n".format(v, w, self.front_vel, [dx,dy]))
 
+    def check_vels_range(self, vels):
+        ''' check if the [v, w] is within the bounds '''
+        v1, w1 = vels
+        v0, w0 = self.cur_vel
+        av, aw = (np.array(vels) - np.array(self.cur_vel)) / self.dt
+        flag = 0
+        if v1 < self.LIN_VEL[0] or v1 > self.LIN_VEL[1]:
+#            print("linear velocity exceeds the range!!")
+            flag += 1
+        if w1 < self.ROT_VEL[0] or w1 > self.ROT_VEL[1]:
+#            print("angular velocity exceeds the range!!")
+            flag += 1
+        if av < self.LIN_ACC[0] or av > self.LIN_ACC[1]:
+#            print("linear acceleration exceeds the range!!")
+            flag += 1
+        if aw < self.ROT_ACC[0] or aw > self.ROT_ACC[1]:
+#            print("angular acceleration exceeds the range!!")
+            flag += 1
+
+        if flag == 0: return True
+        else: return False
+        
+
+    def follower_update(self, vel):
+        [x1, y1, th1] = self.pose_update(self.cur_pose, vel, self.cur_th)
+        self.cur_pose = [x1, y1]
+        self.cur_th = th1
+        self.cur_vel = vel
 
     def check_link_dist(self):
         ''' checl the distance between front and follower '''
         pass
     
-    def states_update(self):
-        pass
-
-    def follower_gen(self):
-        pass
 
 
     def main(self):
@@ -207,22 +236,34 @@ class LinkedDrive:
              ''' Initialize markers '''
              front = MarkerPub(name='front_marker', marker_type=2, rgba=[1.0,1.0,1.0,1.0])
              front_predict = MarkerPub(name='front_predict_marker', marker_type=2, rgba=[0.0,1.0,0.0,0.3])
-             predict_potential = MarkerPub(name='potential_poses', marker_type=1, rgba=[0.5,0.95,0.8,0.8])
              front_arrow = MarkerPub(name='front_arrow', marker_type=0, rgba=[1.0,1.0,1.0,1.0])
              front_predict_arrow = MarkerPub(name='front_predict_arrow', marker_type=0, rgba=[0.0,1.0,0.0,0.3])
+             follower = MarkerPub(name='follower_marker', marker_type=2, rgba=[1.0,0.0,0.0,1.0])
+             follower_arrow = MarkerPub(name='follower_arrow', marker_type=0, rgba=[1.0,0.0,0.0,1.0])
+             predict_potential = MarkerPub(name='potential_poses', marker_type=1, rgba=[0.5,0.95,0.8,0.4])
+             rechable = MarkerPub(name='rechable_poses', marker_type=1, rgba=[1.0,0.0,0.0,1.0])
              ''' get poses '''
-             front_predict_pose = self.f_predict() #[x, y, th]
+             front_predict_pose = self.pose_update(self.front_pose, self.front_vel, self.front_th) #[x, y, th]
              fp_qua = t.quaternion_from_euler(0.0, 0.0, front_predict_pose[2])
+             fo_qua = t.quaternion_from_euler(0.0, 0.0, self.cur_th)
+             ''' get potential poses '''
              potential_poses = self.get_potential_poses()
-             self.vels_from_pose(front_predict_pose[:2])
+             dict_rechable = self.vels_from_pose(potential_poses)
+             rechable_poses = dict_rechable.keys()
+             print(rechable_poses)
+             ''' update follower pose '''
+             if len(rechable_poses) == 0: continue
+             self.follower_update(dict_rechable[rechable_poses[0]])
 
              ''' Publish markers (array) '''
              front.publish_marker([self.front_pose])
              front_arrow.publish_marker([self.front_pose], self.front_ori)
              front_predict.publish_marker([front_predict_pose])
              front_predict_arrow.publish_marker([front_predict_pose], fp_qua)
+             follower.publish_marker([self.cur_pose])
+             follower_arrow.publish_marker([self.cur_pose], fo_qua)
              predict_potential.publish_marker(potential_poses)
-             #print(len(potential_poses))
+             rechable.publish_marker(rechable_poses, clear=True)
             
              rate.sleep()
 
