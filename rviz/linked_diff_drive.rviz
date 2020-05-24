@@ -121,7 +121,7 @@ Visualization Manager:
       Marker Topic: /potential_poses
       Name: MarkerArray
       Namespaces:
-        {}
+        "": true
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -142,7 +142,7 @@ Visualization Manager:
       Value: true
     - Class: rviz/MarkerArray
       Enabled: true
-      Marker Topic: /rechable_poses
+      Marker Topic: /reachable_poses
       Name: MarkerArray
       Namespaces:
         "": true

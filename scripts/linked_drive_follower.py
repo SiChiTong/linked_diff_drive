@@ -85,9 +85,9 @@ class MarkerPub:
 
 class LinkedDrive:
 
-    def __init__(self, rot_vel_max=2.5718, # In rad/s
+    def __init__(self, rot_vel_max=1.5718, # In rad/s
                        lin_vel_max=3.0, # In m/s
-                       rot_acc=1.0, lin_acc=1.0): # in rad/s^2 and m/s^2
+                       rot_acc=10.8, lin_acc=10.4): # in rad/s^2 and m/s^2
 
         ''' Shared params '''
         self.dt = 0.5 # sec
@@ -97,7 +97,7 @@ class LinkedDrive:
         self.RATE = 10
         self.front_pose = [0.0, 0.0] # [x, y]
         self.front_ori = [0.0, 0.0, 0.0, 0.0] # [x, y, z, w]
-        (row, pitch, self.front_th) = t.euler_from_quaternion(self.front_ori)
+        self.front_th = 0.0
         self.front_vel = [0.0, 0.0]  # [v_linear, w_angular]
         
         ''' variables and params of REAR car '''
@@ -125,6 +125,8 @@ class LinkedDrive:
         self.front_ori[1] = data.pose.orientation.y
         self.front_ori[2] = data.pose.orientation.z
         self.front_ori[3] = data.pose.orientation.w
+
+        (row, pitch, self.front_th) = t.euler_from_quaternion(self.front_ori)
 
     def f_twist_update(self, data):
         self.front_vel[0] = data.linear.x
@@ -172,7 +174,7 @@ class LinkedDrive:
 
     def vels_from_pose(self, poses):
         ''' return lin/ang velocities from given pose '''
-        dict_rechable = dict()
+        dict_reachable = dict()
         mat_rot_inv = np.array([ [np.cos(self.cur_th), np.sin(self.cur_th)],
                                  [-np.sin(self.cur_th), np.cos(self.cur_th)] ])
 
@@ -187,11 +189,14 @@ class LinkedDrive:
                 ''' w = omega and v = vel.x '''
                 w = np.arcsin(dx /np.array(r)) / self.dt # 1x2 mat
                 v = np.array(r) * np.array(w)
-            if self.check_vels_range([v, w]): 
-                dict_rechable[tuple(pose)] = [v, w]
 
-        return dict_rechable
-#        rospy.loginfo("v={0}; w={1}; ans={2}; dxdy={3}\n".format(v, w, self.front_vel, [dx,dy]))
+#            print("pose={0}; v and w={1}; check_result={2}; dxdy={3}".format(pose, [v,w], self.check_vels_range([v,w]), [dx,dy]))
+            temp_pose = self.pose_update(self.cur_pose, [v,w], self.cur_th)[:2]
+            print(temp_pose, pose)
+            if self.check_vels_range([v, w]) and self.dist2pose(temp_pose, pose) < 0.0001: 
+                dict_reachable[tuple(pose)] = [v, w]
+
+        return dict_reachable
 
     def check_vels_range(self, vels):
         ''' check if the [v, w] is within the bounds '''
@@ -222,6 +227,18 @@ class LinkedDrive:
         self.cur_th = th1
         self.cur_vel = vel
 
+    def pose_optimization(self):
+        ''' return optimized pose from reachable poses '''
+        potential_poses = self.get_potential_poses()
+        dict_reachable = self.vels_from_pose(potential_poses)
+        reachable_poses = dict_reachable.keys()
+
+
+
+
+    def dist2pose(self, pose1, pose2):
+        return np.sqrt(sum((np.array(pose1) - np.array(pose2))**2))
+
     def check_link_dist(self):
         ''' checl the distance between front and follower '''
         pass
@@ -233,39 +250,39 @@ class LinkedDrive:
         rospy.init_node('linked_drive')
         rate = rospy.Rate(self.RATE)
         while not rospy.is_shutdown():
-             ''' Initialize markers '''
-             front = MarkerPub(name='front_marker', marker_type=2, rgba=[1.0,1.0,1.0,1.0])
-             front_predict = MarkerPub(name='front_predict_marker', marker_type=2, rgba=[0.0,1.0,0.0,0.3])
-             front_arrow = MarkerPub(name='front_arrow', marker_type=0, rgba=[1.0,1.0,1.0,1.0])
-             front_predict_arrow = MarkerPub(name='front_predict_arrow', marker_type=0, rgba=[0.0,1.0,0.0,0.3])
-             follower = MarkerPub(name='follower_marker', marker_type=2, rgba=[1.0,0.0,0.0,1.0])
-             follower_arrow = MarkerPub(name='follower_arrow', marker_type=0, rgba=[1.0,0.0,0.0,1.0])
-             predict_potential = MarkerPub(name='potential_poses', marker_type=1, rgba=[0.5,0.95,0.8,0.4])
-             rechable = MarkerPub(name='rechable_poses', marker_type=1, rgba=[1.0,0.0,0.0,1.0])
-             ''' get poses '''
-             front_predict_pose = self.pose_update(self.front_pose, self.front_vel, self.front_th) #[x, y, th]
-             fp_qua = t.quaternion_from_euler(0.0, 0.0, front_predict_pose[2])
-             fo_qua = t.quaternion_from_euler(0.0, 0.0, self.cur_th)
-             ''' get potential poses '''
-             potential_poses = self.get_potential_poses()
-             dict_rechable = self.vels_from_pose(potential_poses)
-             rechable_poses = dict_rechable.keys()
-             print(rechable_poses)
-             ''' update follower pose '''
-             if len(rechable_poses) == 0: continue
-             self.follower_update(dict_rechable[rechable_poses[0]])
-
-             ''' Publish markers (array) '''
-             front.publish_marker([self.front_pose])
-             front_arrow.publish_marker([self.front_pose], self.front_ori)
-             front_predict.publish_marker([front_predict_pose])
-             front_predict_arrow.publish_marker([front_predict_pose], fp_qua)
-             follower.publish_marker([self.cur_pose])
-             follower_arrow.publish_marker([self.cur_pose], fo_qua)
-             predict_potential.publish_marker(potential_poses)
-             rechable.publish_marker(rechable_poses, clear=True)
+            ''' Initialize markers '''
+            front = MarkerPub(name='front_marker', marker_type=2, rgba=[1.0,1.0,1.0,1.0])
+            front_predict = MarkerPub(name='front_predict_marker', marker_type=2, rgba=[0.0,1.0,0.0,0.3])
+            front_arrow = MarkerPub(name='front_arrow', marker_type=0, rgba=[1.0,1.0,1.0,1.0])
+            front_predict_arrow = MarkerPub(name='front_predict_arrow', marker_type=0, rgba=[0.0,1.0,0.0,0.3])
+            follower = MarkerPub(name='follower_marker', marker_type=2, rgba=[1.0,0.0,0.0,1.0])
+            follower_arrow = MarkerPub(name='follower_arrow', marker_type=0, rgba=[1.0,0.0,0.0,1.0])
+            predict_potential = MarkerPub(name='potential_poses', marker_type=1, rgba=[0.5,0.95,0.8,0.4])
+            reachable = MarkerPub(name='reachable_poses', marker_type=1, rgba=[1.0,0.0,0.0,1.0])
+            ''' get poses '''
+            front_predict_pose = self.pose_update(self.front_pose, self.front_vel, self.front_th) #[x, y, th]
+            fp_qua = t.quaternion_from_euler(0.0, 0.0, front_predict_pose[2])
+            fo_qua = t.quaternion_from_euler(0.0, 0.0, self.cur_th)
+            ''' get potential poses '''
+            potential_poses = self.get_potential_poses()
+            dict_reachable = self.vels_from_pose(potential_poses)
+            reachable_poses = dict_reachable.keys()
+#            print(dict_reachable)
+            ''' update follower pose '''
+#            print(reachable_poses)
+            if len(reachable_poses) > 0: 
+#                self.follower_update(dict_reachable[reachable_poses[0]])
+                reachable.publish_marker(reachable_poses, clear=True)
+            ''' Publish markers (array) '''
+            front.publish_marker([self.front_pose])
+            front_arrow.publish_marker([self.front_pose], self.front_ori)
+            front_predict.publish_marker([front_predict_pose])
+            front_predict_arrow.publish_marker([front_predict_pose], fp_qua)
+            follower.publish_marker([self.cur_pose])
+            follower_arrow.publish_marker([self.cur_pose], fo_qua)
+            predict_potential.publish_marker(potential_poses)
             
-             rate.sleep()
+            rate.sleep()
 
 if __name__ == '__main__':
 
