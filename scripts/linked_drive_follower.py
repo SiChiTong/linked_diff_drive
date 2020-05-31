@@ -17,15 +17,16 @@ from visualization_msgs.msg import MarkerArray
 
 
 class MarkerPub:
-    def __init__(self, name, marker_type, rgba):
+    def __init__(self, name, marker_type, rgba, scale=[0.1,0.1,0.1]):
         ''' MARKERS '''
         self.name = name # str
         self.marker_type = marker_type # int
-        if self.marker_type == 2: self.scale = [0.1, 0.1, 0.1] # SPHERE
-        elif self.marker_type == 1: self.scale = [0.05, 0.05, 0.05] # CUBE
-        elif self.marker_type == 0: self.scale = [0.5, 0.03, 0.03] # ARROW
-        else: self.scale = [0.06, 0.06, 0.06] # OTHERS
+#        if self.marker_type == 2: self.scale = [0.1, 0.1, 0.1] # SPHERE
+#        elif self.marker_type == 1: self.scale = [0.05, 0.05, 0.05] # CUBE
+#        elif self.marker_type == 0: self.scale = [0.5, 0.03, 0.03] # ARROW
+#        else: self.scale = [0.06, 0.06, 0.06] # OTHERS
         self.rgba = rgba # list
+        self.scale = scale
         self.array = MarkerArray() 
         ''' COUNTS '''
         self.COUNT = 0
@@ -85,13 +86,17 @@ class MarkerPub:
 
 class LinkedDrive:
 
-    def __init__(self, rot_vel_max=1.5718, # In rad/s
+    def __init__(self, rot_vel_max=2.5718, # In rad/s
                        lin_vel_max=3.0, # In m/s
-                       rot_acc=10.8, lin_acc=10.4): # in rad/s^2 and m/s^2
+                       rot_acc=2.0, lin_acc=2.0): # in rad/s^2 and m/s^2
+
+        ''' Optimization Ratios '''
+        self.RATIO_DIST = 1.0
 
         ''' Shared params '''
-        self.dt = 0.5 # sec
+        self.dt = 0.3 # sec
         self.L = 1.0 # dist between two solamr when connected with shelft
+        self.ANG_RES = 0.005
 
         ''' variables of FRONT car '''
         self.RATE = 10
@@ -103,7 +108,7 @@ class LinkedDrive:
         ''' variables and params of REAR car '''
         self.INIT_X = - self.L
         self.INIT_Y = 0.0
-        self.cur_pose = [0.0, 0.0] # [x, y]
+        self.cur_pose = [self.INIT_X, self.INIT_Y] # [x, y]
         self.cur_vel = [0.0, 0.0] # [lin, ang]
         self.cur_th = 0.0
         self.ROT_VEL = [-rot_vel_max, rot_vel_max]
@@ -164,9 +169,10 @@ class LinkedDrive:
         
     def get_potential_poses(self):
         ''' return potential locations (poses) for follower to be at '''
-        res = 0.1 # rad, potential poses every __ rad
+        res = self.ANG_RES # rad, potential poses every __ rad
         [x, y] = self.pose_update(self.front_pose, self.front_vel, self.front_th)[:2]
         lst_rad = np.arange(0, 2 * np.pi, res)
+#        print("potential poses = {0}".format(len(lst_rad)))
         lst_poses = []
         for th in lst_rad:
             lst_poses.append([x + self.L * np.cos(th), y + self.L * np.sin(th)])
@@ -192,7 +198,6 @@ class LinkedDrive:
 
 #            print("pose={0}; v and w={1}; check_result={2}; dxdy={3}".format(pose, [v,w], self.check_vels_range([v,w]), [dx,dy]))
             temp_pose = self.pose_update(self.cur_pose, [v,w], self.cur_th)[:2]
-            print(temp_pose, pose)
             if self.check_vels_range([v, w]) and self.dist2pose(temp_pose, pose) < 0.0001: 
                 dict_reachable[tuple(pose)] = [v, w]
 
@@ -227,22 +232,46 @@ class LinkedDrive:
         self.cur_th = th1
         self.cur_vel = vel
 
+    def dist2pose(self, pose1, pose2):
+        return np.sqrt(sum((np.array(pose1) - np.array(pose2))**2))
+
+    def rate_dist(self, target_pose):
+        ''' rate the distance between front and follower (closer the lower) '''
+        r_d = self.RATIO_DIST
+        follower_pose = self.cur_pose
+        return r_d * self.dist2pose(follower_pose, target_pose)
+
+    def rate_ori(self, target_pose, mode="shelft"):
+        ''' rate the orientation, standatd: 1.shelft orientation, 2.front car orientation '''
+
+        ''' 1.shelft orientation as standard '''
+
+        ''' 2.front car orientation as standard '''
+
+        pass
+    
     def pose_optimization(self):
         ''' return optimized pose from reachable poses '''
         potential_poses = self.get_potential_poses()
         dict_reachable = self.vels_from_pose(potential_poses)
         reachable_poses = dict_reachable.keys()
 
+        if len(reachable_poses) > 0:
+            dict_cost = dict()
+            ''' optimization according to : dist to target, face same direction as front'''
+            for p, v in dict_reachable.items():
+                ''' 1. dist to target (initiallizing the dict) '''
+                dict_cost[str(v)] = [self.rate_dist(p)]
+            
+            vels, cost = sorted(dict_cost.items(), key=lambda item: item[1][0], reverse=False)[0]  
+#            print(sorted(dict_cost.items(), key=lambda item: item[1][0], reverse=False)[0]  )
+#            print(vels)
+            return eval(vels)
+        else :
+#            print("No rechable pose exists.")
+            return [0.0, 0.0]
 
 
-
-    def dist2pose(self, pose1, pose2):
-        return np.sqrt(sum((np.array(pose1) - np.array(pose2))**2))
-
-    def check_link_dist(self):
-        ''' checl the distance between front and follower '''
-        pass
-    
 
 
     def main(self):
@@ -251,28 +280,37 @@ class LinkedDrive:
         rate = rospy.Rate(self.RATE)
         while not rospy.is_shutdown():
             ''' Initialize markers '''
-            front = MarkerPub(name='front_marker', marker_type=2, rgba=[1.0,1.0,1.0,1.0])
-            front_predict = MarkerPub(name='front_predict_marker', marker_type=2, rgba=[0.0,1.0,0.0,0.3])
-            front_arrow = MarkerPub(name='front_arrow', marker_type=0, rgba=[1.0,1.0,1.0,1.0])
-            front_predict_arrow = MarkerPub(name='front_predict_arrow', marker_type=0, rgba=[0.0,1.0,0.0,0.3])
-            follower = MarkerPub(name='follower_marker', marker_type=2, rgba=[1.0,0.0,0.0,1.0])
-            follower_arrow = MarkerPub(name='follower_arrow', marker_type=0, rgba=[1.0,0.0,0.0,1.0])
-            predict_potential = MarkerPub(name='potential_poses', marker_type=1, rgba=[0.5,0.95,0.8,0.4])
-            reachable = MarkerPub(name='reachable_poses', marker_type=1, rgba=[1.0,0.0,0.0,1.0])
-            ''' get poses '''
+            front = MarkerPub(name='front_marker', marker_type=2, 
+                    rgba=[1.0,1.0,1.0,1.0], scale=[0.1, 0.1, 0.1])
+            front_predict = MarkerPub(name='front_predict_marker', marker_type=2, 
+                    rgba=[0.0,1.0,0.0,0.3])
+            front_arrow = MarkerPub(name='front_arrow', marker_type=0, 
+                    rgba=[1.0,1.0,1.0,1.0], scale=[0.5, 0.03, 0.03])
+            front_predict_arrow = MarkerPub(name='front_predict_arrow', marker_type=0, 
+                    rgba=[0.0,1.0,0.0,0.3], scale=[0.5, 0.03, 0.03])
+            follower = MarkerPub(name='follower_marker', marker_type=2, 
+                    rgba=[1.0,0.0,0.0,1.0], scale=[0.1, 0.1, 0.1])
+            follower_arrow = MarkerPub(name='follower_arrow', marker_type=0, 
+                    rgba=[1.0,0.0,0.0,1.0], scale=[0.5, 0.03, 0.03])
+#            predict_potential = MarkerPub(name='potential_poses', marker_type=1, 
+#                    rgba=[0.5,0.95,0.8,0.4], scale=[0.05, 0.05, 0.05])
+            reachable = MarkerPub(name='reachable_poses', marker_type=1, 
+                    rgba=[1.0,0.0,0.0,1.0], scale=[0.05, 0.05, 0.05])
+            body = MarkerPub(name='body_marker', marker_type=0, 
+                    rgba=[.8,.8,.8,1.0], scale=[1.0, 0.2, 0.01])
+            ''' get predicted pose '''
             front_predict_pose = self.pose_update(self.front_pose, self.front_vel, self.front_th) #[x, y, th]
+            ''' get quaternions '''
             fp_qua = t.quaternion_from_euler(0.0, 0.0, front_predict_pose[2])
             fo_qua = t.quaternion_from_euler(0.0, 0.0, self.cur_th)
             ''' get potential poses '''
             potential_poses = self.get_potential_poses()
             dict_reachable = self.vels_from_pose(potential_poses)
             reachable_poses = dict_reachable.keys()
-#            print(dict_reachable)
-            ''' update follower pose '''
 #            print(reachable_poses)
-            if len(reachable_poses) > 0: 
-#                self.follower_update(dict_reachable[reachable_poses[0]])
-                reachable.publish_marker(reachable_poses, clear=True)
+#            print(self.front_vel)
+            ''' update follower pose '''
+            optimized_vels = self.pose_optimization()
             ''' Publish markers (array) '''
             front.publish_marker([self.front_pose])
             front_arrow.publish_marker([self.front_pose], self.front_ori)
@@ -280,7 +318,15 @@ class LinkedDrive:
             front_predict_arrow.publish_marker([front_predict_pose], fp_qua)
             follower.publish_marker([self.cur_pose])
             follower_arrow.publish_marker([self.cur_pose], fo_qua)
-            predict_potential.publish_marker(potential_poses)
+#            predict_potential.publish_marker(potential_poses)
+            if len(reachable_poses) > 0: 
+                self.follower_update(optimized_vels)
+                reachable.publish_marker(reachable_poses, clear=True)
+            ''' publish imaginary shelft body '''
+            dx = front_predict_pose[0] - self.cur_pose[0]
+            dy = front_predict_pose[1] - self.cur_pose[1]
+            body_qua = t.quaternion_from_euler(0.0, 0.0, np.arctan2(dy, dx))
+            body.publish_marker([self.cur_pose], body_qua)
             
             rate.sleep()
 
